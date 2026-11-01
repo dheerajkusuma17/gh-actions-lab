@@ -1,0 +1,102 @@
+# 5c. Block 1: name and triggers (WHEN the robot runs)
+name: Test, Train, Gate and Version Model
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "requirements.txt"
+      - ".github/workflows/**"
+
+  workflow_dispatch:
+    inputs:
+      min_f1:
+        description: "Minimum F1 score the model must reach (0 to 1)"
+        required: false
+        default: "0.95"
+
+  schedule:
+    - cron: "0 6 * * 1"
+
+
+# 5d. Block 2: shared settings
+
+permissions:
+  contents: write
+
+concurrency:
+  group: model-training
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  MIN_F1: ${{ github.event.inputs.min_f1 || '0.95' }}
+
+# 5e. Block 3: Job 1, the tests
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python (and reuse downloaded packages from earlier runs)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+        
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest -v
+
+# 5f. Block 4: Job 2, train, gate, save
+
+  train-and-version:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Create a version name
+        run: echo "MODEL_VERSION=$(date -u '+%Y%m%d%H%M%S')_${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Train the model
+        run: python src/train_model.py --version "$MODEL_VERSION"
+
+      - name: Evaluate the model (quality gate)
+        run: python src/evaluate_model.py --version "$MODEL_VERSION" --min-f1 "$MIN_F1"
+
+      - name: Upload model, metrics and MLflow log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ env.MODEL_VERSION }}
+          path: |
+            models/model_${{ env.MODEL_VERSION }}.joblib
+            metrics/metrics_${{ env.MODEL_VERSION }}.json
+            mlflow.db
+          if-no-files-found: warn
+
+      - name: Save the new model version to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git congif user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "models/model_${MODEL_VERSION}.joblib" "metrics/metrics_${MODEL_VERSION}.json"
+          git commit -m "Add model ${MODEL_VERSION} (passed quality gate) [skip ci]"
+          git push
