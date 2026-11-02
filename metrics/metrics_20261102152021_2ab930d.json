@@ -1,0 +1,8 @@
+{
+    "version": "20261102152021_2ab930d",
+    "f1_score": 0.966,
+    "accuracy": 0.9561,
+    "roc_auc": 0.9888,
+    "min_f1": 0.95,
+    "passed": true
+}
